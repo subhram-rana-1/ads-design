@@ -1,17 +1,26 @@
-"""Persona selection. Same two-step shape as publishers, run afterwards.
+"""Persona selection.
 
-The ordering is a real dependency, not a convenience: `publisher_reach` asks
-whether a persona is actually present on the publishers being bought, which
-cannot be answered until the publisher plan exists. That costs a sequential
-round-trip and is worth it — a persona score that ignores reachability
-recommends audiences the campaign cannot serve.
+Scoring used to wait for the publisher buy, because `publisher_reach` asks
+whether a persona is present on the placements being bought. That dependency is
+gone: reach is now computed in `core.reach` from age bands and gender splits,
+which is what it always was — arithmetic, not judgement.
+
+What is left for the model is four attributes that compare the persona against
+the brief alone, so all ten calls run concurrently with the twenty publisher
+calls rather than behind them.
+
+Selection (step 2) still runs after the publisher verdict, because whether a
+persona is worth an ad set depends on whether the buy can actually reach them.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
+from app import config
 from app.catalog import loader
+from app.core import reach
 from app.core.scoring import (
     MAX_PERSONAS,
     MIN_PERSONAS,
@@ -28,11 +37,26 @@ from app.models.recommendation import AttributeScore, AudiencePlan, PublisherPla
 logger = logging.getLogger(__name__)
 
 
-async def build_audience_plan(brief: Brief, publisher_plan: PublisherPlan) -> AudiencePlan:
+async def score_all(brief: Brief) -> dict[str, list[AttributeScore]]:
+    """Step 1: the four attributes that need no publisher context."""
+    return await _score(brief, loader.personas())
+
+
+async def build_audience_plan(
+    brief: Brief,
+    publisher_plan: PublisherPlan,
+    raw_scores: dict[str, list[AttributeScore]],
+) -> AudiencePlan:
     personas = loader.personas()
     publisher_context = _publisher_context(publisher_plan)
 
-    raw_scores = await _score(brief, personas, publisher_context)
+    # publisher_reach is computed, not asked for, and joined in here — the one
+    # point where the persona track rejoins the publisher track.
+    for persona in personas:
+        scores = [s for s in raw_scores.get(persona.id, []) if s.attribute != "publisher_reach"]
+        scores.append(reach.publisher_reach(persona, publisher_plan.recommended))
+        raw_scores[persona.id] = scores
+
     ranked = _apply_rubric(raw_scores, personas)
     decisions = await _select(brief, ranked, publisher_context)
 
@@ -97,37 +121,51 @@ def _enforce_bounds(scored: list[ScoredPersona]) -> set[str]:
     return {s.persona_id for s in chosen}
 
 
-async def _score(brief: Brief, personas, publisher_context: list[dict]) -> dict[str, list[AttributeScore]]:
+async def _score(brief: Brief, personas) -> dict[str, list[AttributeScore]]:
+    """Fan out one call per persona, same reasoning as the publisher engine.
+
+    Every attribute asked for here is an absolute judgement against the brief,
+    which is what makes this stage independent of publisher selection.
+    Cross-persona comparison happens in `_select`, which is deliberately still a
+    single call — "prefer distinct personas over similar ones" cannot be
+    evaluated one persona at a time.
+    """
+    results = await asyncio.gather(
+        *(_score_one(brief, persona) for persona in personas),
+        return_exceptions=True,
+    )
+
+    by_id: dict[str, list[AttributeScore]] = {}
+    for persona, result in zip(personas, results):
+        if isinstance(result, BaseException):
+            logger.warning("Scoring failed for %s: %s", persona.id, result)
+            by_id[persona.id] = []
+        else:
+            by_id[persona.id] = result
+    return by_id
+
+
+async def _score_one(brief: Brief, persona) -> list[AttributeScore]:
     result = await generate_json(
         prompt_file="persona_scoring.md",
         payload={
             "brief": brief.model_dump(mode="json"),
-            "recommended_publishers": publisher_context,
-            "personas": loader.persona_catalog_for_prompt(),
+            "persona": persona.model_dump(),
         },
         response_schema=schemas.PERSONA_SCORING,
         temperature=0.3,
-        label="persona_scoring",
+        label=f"persona_scoring[{persona.id}]",
+        thinking_budget=config.GEMINI_SCORING_THINKING_BUDGET,
     )
-
-    by_id: dict[str, list[AttributeScore]] = {}
-    for item in result.get("personas", []):
-        persona_id = item.get("persona_id")
-        if not persona_id:
-            continue
-        by_id[persona_id] = [
-            AttributeScore(
-                attribute=s["attribute"],
-                score=clamp_score(s.get("score", 0.0)),
-                reason=s.get("reason") or "",
-            )
-            for s in item.get("attribute_scores", [])
-            if s.get("attribute") in PERSONA_WEIGHTS
-        ]
-
-    for persona in personas:
-        by_id.setdefault(persona.id, [])
-    return by_id
+    return [
+        AttributeScore(
+            attribute=s["attribute"],
+            score=clamp_score(s.get("score", 0.0)),
+            reason=s.get("reason") or "",
+        )
+        for s in result.get("attribute_scores", [])
+        if s.get("attribute") in PERSONA_WEIGHTS
+    ]
 
 
 def _apply_rubric(raw_scores: dict[str, list[AttributeScore]], personas) -> list[dict]:

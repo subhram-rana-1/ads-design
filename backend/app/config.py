@@ -30,13 +30,34 @@ PUBLISHERS_PATH = DATA_DIR / "publishers.json"
 PERSONAS_PATH = DATA_DIR / "shopper_personas.json"
 SAMPLE_BRIEFS_PATH = DATA_DIR / "example_advertisers.txt"
 
+# Host-side ports, passed in by compose. Used only to print a correct startup
+# banner — uvicorn reports the port it binds *inside* the container, which is
+# not the URL anyone should be opening.
+FRONTEND_PORT = os.getenv("FRONTEND_PORT", "8080")
+BACKEND_PORT = os.getenv("BACKEND_PORT", "8000")
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_TIMEOUT_SECONDS = 180.0
 
-# One retry on a failed or unparseable call, then the session fails loudly.
-GEMINI_MAX_ATTEMPTS = 2
+# Two retries on a failed or unparseable call, then the session fails loudly.
+GEMINI_MAX_ATTEMPTS = 3
+
+# How many Gemini calls may be in flight at once. Scoring fans out one call per
+# publisher and per persona, so 30 requests want to leave simultaneously.
+# Gemini's free tier allows roughly 10 requests/minute — if you are on a free
+# AI Studio key, lower this to 4 and expect the scoring phases to take longer.
+GEMINI_MAX_CONCURRENCY = int(os.getenv("GEMINI_MAX_CONCURRENCY", "8"))
+
+# 429s are the expected failure mode of a fan-out. Retrying after one second
+# just burns the next attempt.
+GEMINI_RATE_LIMIT_BACKOFF_SECONDS = 6.0
+
+# Thinking budget for the scoring passes. The rubric in those prompts is
+# explicit, so the reasoning is already written down; thinking mostly buys
+# latency. Set to None to let the model decide.
+GEMINI_SCORING_THINKING_BUDGET: int | None = 0
 
 # Assumptions surfaced in the UI. Not secrets, not tuning knobs — they are
 # stated numbers that the campaign math depends on.

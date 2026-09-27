@@ -32,11 +32,13 @@ PUBLISHER_ATTRIBUTES = [
     "context_fit",
 ]
 
+# `publisher_reach` is absent on purpose: it is computed in core.reach from age
+# bands and gender splits rather than judged. Leaving it out of the enum is what
+# lets persona scoring run without waiting for the publisher buy.
 PERSONA_ATTRIBUTES = [
     "category_affinity",
     "messaging_fit",
     "price_alignment",
-    "publisher_reach",
     "disinterest_conflict",
 ]
 
@@ -125,19 +127,12 @@ BRIEF_COLLECTOR = _obj(
 # Publishers: score, then collate
 # --------------------------------------------------------------------------
 
+# One publisher per call. Scoring fans out, so the response carries no id: the
+# caller already knows which publisher it asked about, and a model that never
+# writes an id cannot return the wrong one.
 PUBLISHER_SCORING = _obj(
-    {
-        "publishers": _array(
-            _obj(
-                {
-                    "publisher_id": STRING,
-                    "attribute_scores": _array(_attribute_score(PUBLISHER_ATTRIBUTES)),
-                },
-                ["publisher_id", "attribute_scores"],
-            )
-        )
-    },
-    ["publishers"],
+    {"attribute_scores": _array(_attribute_score(PUBLISHER_ATTRIBUTES))},
+    ["attribute_scores"],
 )
 
 PUBLISHER_VERDICT = _obj(
@@ -179,19 +174,10 @@ PUBLISHER_VERDICT = _obj(
 # Personas: score, then select
 # --------------------------------------------------------------------------
 
+# One persona per call, same reasoning as PUBLISHER_SCORING.
 PERSONA_SCORING = _obj(
-    {
-        "personas": _array(
-            _obj(
-                {
-                    "persona_id": STRING,
-                    "attribute_scores": _array(_attribute_score(PERSONA_ATTRIBUTES)),
-                },
-                ["persona_id", "attribute_scores"],
-            )
-        )
-    },
-    ["personas"],
+    {"attribute_scores": _array(_attribute_score(PERSONA_ATTRIBUTES))},
+    ["attribute_scores"],
 )
 
 PERSONA_SELECTION = _obj(

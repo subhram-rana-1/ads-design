@@ -67,6 +67,59 @@ def publisher_catalog_for_prompt() -> list[dict]:
     return [p.model_dump() for p in publishers()]
 
 
+@lru_cache(maxsize=1)
+def _distributions() -> dict[str, list[float]]:
+    return {
+        "monthly_impressions": sorted(float(p.monthly_impressions) for p in publishers()),
+        "avg_order_value_usd": sorted(float(p.avg_order_value_usd) for p in publishers()),
+        "cpm_usd": sorted(float(p.cpm_usd) for p in publishers()),
+    }
+
+
+def _spread(values: list[float]) -> dict:
+    return {
+        "min": values[0],
+        "median": values[len(values) // 2],
+        "max": values[-1],
+    }
+
+
+def _percentile_rank(value: float, values: list[float]) -> int:
+    """Share of the catalog at or below `value`, 0-100."""
+    at_or_below = sum(1 for v in values if v <= value)
+    return round(at_or_below / len(values) * 100)
+
+
+def publisher_scale_context(publisher: Publisher) -> dict:
+    """Where one publisher sits in the catalog, computed rather than eyeballed.
+
+    `scale_fit` is the one publisher attribute that is inherently comparative —
+    "can this inventory absorb the budget" is meaningless without knowing the
+    catalog spans 30x. Since scoring now runs one publisher per call, the model
+    cannot see the others, so the reference frame is supplied here instead.
+
+    Handing over a computed percentile is better than the full catalog anyway:
+    the model is not asked to rank 20 numbers correctly, it is told the answer
+    and asked to judge against it.
+    """
+    dist = _distributions()
+    return {
+        "catalog_size": len(publishers()),
+        "monthly_impressions": _spread(dist["monthly_impressions"]),
+        "avg_order_value_usd": _spread(dist["avg_order_value_usd"]),
+        "cpm_usd": _spread(dist["cpm_usd"]),
+        "this_publisher_percentiles": {
+            "monthly_impressions": _percentile_rank(
+                publisher.monthly_impressions, dist["monthly_impressions"]
+            ),
+            "avg_order_value_usd": _percentile_rank(
+                publisher.avg_order_value_usd, dist["avg_order_value_usd"]
+            ),
+            "cpm_usd": _percentile_rank(publisher.cpm_usd, dist["cpm_usd"]),
+        },
+    }
+
+
 def persona_catalog_for_prompt() -> list[dict]:
     return [p.model_dump() for p in personas()]
 

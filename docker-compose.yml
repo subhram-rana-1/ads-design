@@ -1,6 +1,10 @@
 services:
   backend:
-    build: ./backend
+    build:
+      # Root context so the Dockerfile can bake in prompts/ and the catalog,
+      # which is what makes the image deployable without these volume mounts.
+      context: .
+      dockerfile: backend/Dockerfile
     # Host port is overridable because 8000 and 8080 are popular. Only the left
     # side changes; nginx always reaches the backend as backend:8000 on the
     # compose network.
@@ -11,6 +15,10 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - PROMPTS_DIR=/prompts
       - DATA_DIR=/data
+      # Passed in only so the startup banner can print the URLs you actually
+      # open, rather than the port uvicorn binds inside the container.
+      - FRONTEND_PORT=${FRONTEND_PORT:-8080}
+      - BACKEND_PORT=${BACKEND_PORT:-8000}
     volumes:
       # Source is mounted so --reload picks up edits without a rebuild.
       - ./backend:/app
@@ -26,7 +34,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "${FRONTEND_PORT:-8080}:80"
+      - "${FRONTEND_PORT:-8080}:8080"
     volumes:
       - ./frontend/public:/usr/share/nginx/html:ro
     depends_on:

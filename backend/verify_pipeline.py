@@ -25,26 +25,21 @@ from app.store.memory import store
 random.seed(7)
 
 PUB_ATTRS = ["relevance", "audience_overlap", "price_fit", "scale_fit", "context_fit"]
-PERSONA_ATTRS = [
-    "category_affinity", "messaging_fit", "price_alignment", "publisher_reach", "disinterest_conflict",
-]
+# publisher_reach is computed in core.reach, not returned by the model.
+PERSONA_ATTRS = ["category_affinity", "messaging_fit", "price_alignment", "disinterest_conflict"]
 
 
-async def fake_generate_json(*, prompt_file, payload, response_schema, temperature=0.4, label=""):
+async def fake_generate_json(*, prompt_file, payload, response_schema, temperature=0.4, label="", thinking_budget=None):
     publishers = loader.publishers()
     personas = loader.personas()
 
     if prompt_file == "publisher_scoring.md":
+        # Fanned out: one publisher per call.
+        assert "publisher" in payload and "catalog_context" in payload
         return {
-            "publishers": [
-                {
-                    "publisher_id": p.id,
-                    "attribute_scores": [
-                        {"attribute": a, "reason": f"stub reason for {a}", "score": round(random.uniform(-1, 1), 2)}
-                        for a in PUB_ATTRS
-                    ],
-                }
-                for p in publishers
+            "attribute_scores": [
+                {"attribute": a, "reason": f"stub reason for {a}", "score": round(random.uniform(-1, 1), 2)}
+                for a in PUB_ATTRS
             ]
         }
 
@@ -63,16 +58,13 @@ async def fake_generate_json(*, prompt_file, payload, response_schema, temperatu
         }
 
     if prompt_file == "persona_scoring.md":
+        # Fanned out: one persona per call.
+        assert "persona" in payload
+        assert "recommended_publishers" not in payload, "persona scoring must not depend on the buy"
         return {
-            "personas": [
-                {
-                    "persona_id": p.id,
-                    "attribute_scores": [
-                        {"attribute": a, "reason": f"stub reason for {a}", "score": round(random.uniform(-1, 1), 2)}
-                        for a in PERSONA_ATTRS
-                    ],
-                }
-                for p in personas
+            "attribute_scores": [
+                {"attribute": a, "reason": f"stub reason for {a}", "score": round(random.uniform(-1, 1), 2)}
+                for a in PERSONA_ATTRS
             ]
         }
 
@@ -149,7 +141,11 @@ async def run_case(name: str, brief: Brief) -> None:
         assert s.publisher.cpm_usd > 0, "publisher not hydrated with a CPM"
 
     audiences = rec.audience_plan
-    assert len(audiences.selected) + len(audiences.not_selected) == 10, "all 10 personas accounted for"
+    assert len(audiences.selected) + len(audiences.not_selected) == 10, "all personas accounted for"
+    for sp in audiences.selected + audiences.not_selected:
+        attrs = {a.attribute for a in sp.attribute_scores}
+        assert "publisher_reach" in attrs, f"{sp.persona_id} missing computed reach"
+        assert len(sp.attribute_scores) == 5, f"{sp.persona_id} has {len(sp.attribute_scores)} attributes"
     assert 3 <= len(audiences.selected) <= 5, f"selected {len(audiences.selected)} personas"
     assert all(len(a.creatives) == 3 for a in rec.ad_sets), "every ad set needs 3 creatives"
     assert len(rec.ad_sets) == len(audiences.selected), "one ad set per selected persona"

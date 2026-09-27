@@ -1,0 +1,12 @@
+# Paths are relative to the repo root, since that is the build context.
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+.git/
+.claude/
+.idea/
+.jbeval/
+thoughts/
+docs/
+.env

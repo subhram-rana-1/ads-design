@@ -4,112 +4,163 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ad Designer</title>
+
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            ink: '#0e1014',
-            panel: '#15181f',
-            edge: '#252a34',
-            muted: '#8b93a3',
-            accent: '#6ee7b7',
-            warn: '#fbbf24',
-            bad: '#f87171',
+            // Light theme. Names stay semantic rather than literal — `ink` is
+            // the page, `panel` is a raised surface — so the whole scheme is
+            // these seven values and nothing else needs to move.
+            ink: '#ffffff',
+            panel: '#f8f9fb',
+            edge: '#e6e9ee',
+            muted: '#71798a',
+            accent: '#0f8a63',
+            warn: '#b45309',
+            bad: '#dc2626',
           },
+          fontFamily: {
+            // Arial everywhere. All three slots are filled deliberately so that
+            // an existing `font-serif` or `font-mono` class resolves to Arial
+            // too — there is no second typeface left to leak through.
+            //
+            // Losing the monospace face does not cost column alignment: Arial's
+            // digits are all the same advance width, so the score tables and
+            // figure columns still line up.
+            sans: ['Arial', 'Helvetica', 'sans-serif'],
+            serif: ['Arial', 'Helvetica', 'sans-serif'],
+            mono: ['Arial', 'Helvetica', 'sans-serif'],
+          },
+          borderRadius: { xl: '0.875rem', '2xl': '1.25rem', '3xl': '1.75rem' },
         },
       },
     };
   </script>
+
   <style>
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-thumb { background: #2b313c; border-radius: 4px; }
+    /* Arial everywhere, including the elements the browser gives its own
+       default to: `pre` and `code` are monospace in every UA stylesheet, and
+       form controls do not inherit the body font at all. Without this line the
+       raw campaign JSON and the composer would quietly stay non-Arial. */
+    html, body, pre, code, kbd, samp, textarea, input, button, select {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    /* Keeps figures aligned in the allocation table and score columns. */
+    body { font-variant-numeric: tabular-nums; }
+
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-thumb { background: #d3d8e0; border-radius: 6px; }
+    ::-webkit-scrollbar-thumb:hover { background: #bcc3ce; }
     ::-webkit-scrollbar-track { background: transparent; }
-    .drawer { transition: transform .28s cubic-bezier(.4,0,.2,1); }
+
+    .drawer { transition: transform .42s cubic-bezier(.32,.72,0,1); }
     .drawer.closed { transform: translateX(100%); }
-    .fade-in { animation: fade .25s ease both; }
-    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-    .dots::after { content: '…'; animation: dots 1.4s steps(4,end) infinite; }
-    @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '…'; } }
+    #scrim { transition: opacity .3s ease; }
+
+    .rise { animation: rise .42s cubic-bezier(.22,1,.36,1) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    /* Progress: the active row breathes, so a 25-second phase looks alive. */
+    .working { animation: breathe 2.1s ease-in-out infinite; }
+    @keyframes breathe {
+      0%, 100% { background-color: rgba(15,138,99,0.045); border-color: rgba(15,138,99,0.16); }
+      50%      { background-color: rgba(15,138,99,0.13);  border-color: rgba(15,138,99,0.42); }
+    }
+    .pip { animation: pip 1.5s ease-in-out infinite; }
+    @keyframes pip {
+      0%, 100% { transform: scale(0.72); opacity: .5; }
+      50%      { transform: scale(1.15); opacity: 1; }
+    }
+    .pip-ring { animation: ring 1.8s ease-out infinite; }
+    @keyframes ring {
+      0%   { transform: scale(0.7); opacity: .55; }
+      80%, 100% { transform: scale(2.3); opacity: 0; }
+    }
+    .tick { animation: tick .34s cubic-bezier(.22,1.4,.4,1) both; }
+    @keyframes tick { from { transform: scale(0); } to { transform: scale(1); } }
+
+    /* Cursor on the streaming reply. */
+    .caret::after {
+      content: ''; display: inline-block; width: 2px; height: 1em;
+      background: currentColor; margin-left: 2px; vertical-align: -0.12em;
+      animation: blink 1.05s steps(2, start) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .lift { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+    .lift:hover { transform: translateY(-1px); }
   </style>
 </head>
-<body class="h-full bg-ink text-gray-100 antialiased">
+<body class="h-full bg-ink text-gray-900 antialiased font-sans">
 <div class="flex h-full overflow-hidden">
 
   <!-- Sidebar -->
   <aside class="w-64 shrink-0 border-r border-edge bg-panel flex flex-col">
-    <div class="p-4 border-b border-edge">
-      <div class="text-sm font-semibold tracking-tight">Ad Designer</div>
-      <div class="text-[11px] text-muted mt-0.5">Commerce-media campaign builder</div>
-    </div>
-    <div class="p-3">
+    <div class="p-3 pt-4">
       <button id="new-session"
-        class="w-full text-sm rounded-lg border border-edge hover:border-accent/50 hover:bg-white/5 py-2 transition">
+        class="lift w-full text-[13px] rounded-2xl border border-edge bg-ink hover:border-accent/45
+               hover:shadow-[0_2px_10px_rgba(15,23,42,0.05)] py-2.5">
         + New campaign
       </button>
     </div>
-    <div id="session-list" class="flex-1 overflow-y-auto px-2 pb-3 space-y-1"></div>
-    <div class="p-3 border-t border-edge text-[11px] text-muted leading-relaxed">
+    <div id="session-list" class="flex-1 overflow-y-auto px-2.5 pb-3 space-y-1"></div>
+    <div class="px-5 py-4 border-t border-edge text-[11px] text-muted leading-relaxed font-light">
       Sessions live in the server's memory. Restarting the backend clears them.
     </div>
   </aside>
 
   <!-- Main -->
-  <main class="flex-1 min-w-0 flex flex-col">
-    <header class="px-8 py-5 border-b border-edge flex items-center justify-between gap-4">
-      <div class="min-w-0">
-        <h1 id="header-title" class="text-lg font-semibold tracking-tight truncate">
-          Tell us about your business. We'll design the ads.
-        </h1>
-        <p id="header-sub" class="text-xs text-muted mt-0.5">
-          Publishers, audiences, ad copy and a runnable campaign config.
-        </p>
-      </div>
-      <button id="open-drawer"
-        class="hidden shrink-0 text-sm font-medium rounded-lg bg-accent text-ink px-4 py-2 hover:brightness-110 transition">
-        View campaign →
-      </button>
-    </header>
+  <main class="flex-1 min-w-0 flex flex-col relative">
+    <!-- The header is gone, so this floats over the transcript instead. It is
+         still the only way back into the drawer once it has been closed. -->
+    <button id="open-drawer"
+      class="lift hidden absolute top-6 right-10 z-20 text-[13px] font-medium rounded-2xl
+             bg-accent text-ink px-5 py-2.5 shadow-[0_4px_16px_rgba(15,138,99,0.22)]
+             hover:shadow-[0_6px_20px_rgba(15,138,99,0.32)]">
+      View campaign →
+    </button>
 
-    <div id="transcript" class="flex-1 overflow-y-auto px-8 py-6"></div>
+    <div id="transcript" class="flex-1 overflow-y-auto px-10 py-8"></div>
 
-    <div id="composer-wrap" class="border-t border-edge px-8 py-4">
-      <div id="samples" class="hidden mb-3 max-h-56 overflow-y-auto rounded-lg border border-edge bg-panel p-2 space-y-1"></div>
-      <div class="flex gap-2 items-end">
+    <div id="composer-wrap" class="px-10 py-5">
+      <div id="samples" class="hidden mb-3 max-h-60 overflow-y-auto rounded-2xl border border-edge bg-panel p-2 space-y-0.5 rise"></div>
+      <div class="flex gap-2 items-end max-w-3xl mx-auto">
         <textarea id="composer" rows="1" placeholder="We sell premium dog food for senior dogs…"
-          class="flex-1 resize-none bg-panel border border-edge rounded-lg px-3 py-2.5 text-sm
-                 focus:outline-none focus:border-accent/60 placeholder:text-muted/60 max-h-40"></textarea>
+          class="flex-1 resize-none bg-panel border border-edge rounded-2xl px-4 py-3 text-sm
+                 transition focus:outline-none focus:border-accent/55 focus:bg-ink
+                 focus:shadow-[0_0_0_4px_rgba(15,138,99,0.08)]
+                 placeholder:text-muted/60 placeholder:font-light max-h-40"></textarea>
         <button id="toggle-samples" title="Sample briefs"
-          class="shrink-0 text-xs rounded-lg border border-edge px-3 py-2.5 hover:bg-white/5 transition">Samples</button>
+          class="lift shrink-0 text-xs rounded-2xl border border-edge px-4 py-3 hover:bg-black/[0.03]">Samples</button>
         <button id="send"
-          class="shrink-0 text-sm font-medium rounded-lg bg-accent text-ink px-4 py-2.5 hover:brightness-110
-                 disabled:opacity-40 disabled:cursor-not-allowed transition">Send</button>
+          class="lift shrink-0 text-[13px] font-medium rounded-2xl bg-accent text-ink px-5 py-3
+                 hover:shadow-[0_4px_16px_rgba(15,138,99,0.28)]
+                 disabled:opacity-35 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none">Send</button>
       </div>
-      <div id="composer-note" class="hidden mt-2 text-[11px] text-muted"></div>
+      <div id="composer-note" class="hidden mt-2.5 text-[11px] text-muted text-center font-light"></div>
     </div>
   </main>
 
   <!-- Drawer -->
   <section id="drawer"
-    class="drawer closed fixed right-0 top-0 h-full w-[52rem] max-w-[92vw] bg-panel border-l border-edge
-           shadow-2xl z-40 flex flex-col">
-    <div class="px-6 py-4 border-b border-edge flex items-center justify-between gap-4">
-      <div class="min-w-0">
-        <div id="drawer-title" class="font-semibold tracking-tight truncate">Campaign</div>
-        <div id="drawer-meta" class="text-[11px] text-muted mt-0.5"></div>
-      </div>
-      <button id="close-drawer" class="text-muted hover:text-white text-sm px-2 py-1">✕</button>
+    class="drawer closed fixed right-0 top-0 h-full w-[54rem] max-w-[93vw] bg-panel border-l border-edge
+           shadow-[-24px_0_60px_-24px_rgba(15,23,42,0.18)] z-40 flex flex-col">
+    <div class="px-7 py-5 border-b border-edge flex items-center justify-between gap-4">
+      <div id="drawer-title" class="font-serif text-2xl leading-none truncate">Campaign</div>
+      <button id="close-drawer" class="text-muted hover:text-gray-900 transition text-lg leading-none px-2 py-1">✕</button>
     </div>
-    <nav class="px-6 pt-3 flex gap-1 border-b border-edge text-xs">
-      <button data-tab="publishers" class="tab px-3 py-2 rounded-t-md border-b-2 border-accent text-white">Publishers</button>
-      <button data-tab="audiences" class="tab px-3 py-2 rounded-t-md border-b-2 border-transparent text-muted hover:text-white">Audiences</button>
-      <button data-tab="creatives" class="tab px-3 py-2 rounded-t-md border-b-2 border-transparent text-muted hover:text-white">Ad sets</button>
-      <button data-tab="config" class="tab px-3 py-2 rounded-t-md border-b-2 border-transparent text-muted hover:text-white">Campaign config</button>
+    <nav class="px-7 pt-3 flex gap-1 border-b border-edge text-xs">
+      <button data-tab="publishers" class="tab px-3.5 py-2.5 border-b-2 border-accent text-gray-900 transition">Publishers</button>
+      <button data-tab="audiences" class="tab px-3.5 py-2.5 border-b-2 border-transparent text-muted hover:text-gray-900 transition">Audiences</button>
+      <button data-tab="creatives" class="tab px-3.5 py-2.5 border-b-2 border-transparent text-muted hover:text-gray-900 transition">Ad sets</button>
+      <button data-tab="config" class="tab px-3.5 py-2.5 border-b-2 border-transparent text-muted hover:text-gray-900 transition">Campaign config</button>
     </nav>
-    <div id="drawer-body" class="flex-1 overflow-y-auto px-6 py-5"></div>
+    <div id="drawer-body" class="flex-1 overflow-y-auto px-7 py-6"></div>
   </section>
-  <div id="scrim" class="hidden fixed inset-0 bg-black/50 z-30"></div>
+  <div id="scrim" class="hidden fixed inset-0 bg-gray-900/15 backdrop-blur-[1px] z-30"></div>
 </div>
 
 <script src="app.js"></script>

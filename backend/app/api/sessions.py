@@ -8,13 +8,20 @@ the wait is real.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.models.domain import Brief, Session, SessionSummary
 from app.models.recommendation import AdsCampaignRecommendation
 from app.services import brief_agent
 from app.store.memory import SessionNotFound, store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sessions"])
 
@@ -27,33 +34,19 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class ChatResponse(BaseModel):
-    reply: str
-    brief: Brief
-    session_status: str
-
-
 @router.post("/sessions", response_model=Session)
 async def create_session(body: CreateSessionRequest) -> Session:
-    """Create a session, optionally running the first turn in the same round-trip.
+    """Create and name a session. The first turn is a separate, streamed call.
 
-    Clicking a sample brief calls exactly this: name the session and answer the
-    opening message together, so the UI does not flash an empty transcript.
+    `initial_message` is used only to name the session — it is not recorded as a
+    message here. The client immediately POSTs the same text to `/chat`, which
+    streams the reply. Running the turn inside creation would mean buffering the
+    whole reply before the client saw anything, which is the thing streaming
+    exists to avoid.
     """
     message = (body.initial_message or "").strip()
     name = await brief_agent.name_session(message) if message else "New Campaign"
-
-    session = store.create_session(name)
-    if message:
-        try:
-            await brief_agent.run_turn(session, message)
-        except Exception:
-            # Creation is atomic. A first turn that fails would otherwise leave
-            # an empty session sitting in the sidebar that the user has to clean
-            # up manually.
-            store.delete_session(session.id)
-            raise
-    return session
+    return store.create_session(name)
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
@@ -75,8 +68,13 @@ def delete_session(session_id: str) -> dict:
     return {"deleted": session_id}
 
 
-@router.post("/sessions/{session_id}/chat", response_model=ChatResponse)
-async def chat(session_id: str, body: ChatRequest) -> ChatResponse:
+@router.post("/sessions/{session_id}/chat")
+async def chat(session_id: str, body: ChatRequest) -> StreamingResponse:
+    """One turn, streamed as `delta` events then a final `done`.
+
+    POST rather than GET, so this is not an `EventSource` — the client reads the
+    body with a stream reader. Same SSE framing either way.
+    """
     session = _get(session_id)
 
     if session.status != "collecting":
@@ -91,8 +89,48 @@ async def chat(session_id: str, body: ChatRequest) -> ChatResponse:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    reply = await brief_agent.run_turn(session, message)
-    return ChatResponse(reply=reply, brief=session.brief, session_status=session.status)
+    async def events():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def on_delta(text: str) -> None:
+            await queue.put(text)
+
+        async def run() -> None:
+            try:
+                await brief_agent.run_turn_streamed(session, message, on_delta)
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield _sse("delta", {"text": chunk})
+
+            await task  # re-raises whatever the turn failed with
+            yield _sse(
+                "done",
+                {
+                    "reply": session.chat_history[-1].content,
+                    "brief": session.brief.model_dump(mode="json"),
+                    "session_status": session.status,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the transcript
+            logger.exception("Chat turn failed for session %s", session_id)
+            yield _sse("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 @router.get("/sessions/{session_id}/recommendation", response_model=AdsCampaignRecommendation)

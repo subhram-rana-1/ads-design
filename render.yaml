@@ -1,0 +1,30 @@
+# Optional hosted deploy. The primary way to run this is `docker compose up`
+# locally — see the repo root.
+#
+# One service, not two: the image bakes in the UI and serves it from the same
+# uvicorn process. That keeps the SSE generation stream on a direct connection
+# instead of routing it through a static-site CDN, which would buffer it and
+# make the progress UI sit silent until the very end.
+#
+# THE API KEY IS NOT IN THIS FILE AND MUST NEVER BE.
+# `sync: false` means Render prompts for the value in its dashboard on first
+# deploy and stores it encrypted. Nothing secret is committed.
+
+services:
+  - type: web
+    name: ads-design
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false          # set in the Render dashboard, never here
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      # Scoring fans out 30 concurrent calls. Free-tier Gemini keys allow
+      # roughly 10 requests/minute, so lower this if you see 429s.
+      - key: GEMINI_MAX_CONCURRENCY
+        value: "8"
+      # Render injects PORT; the Dockerfile CMD already honours it.

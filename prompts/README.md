@@ -20,9 +20,9 @@ parses free text.
 |---|---|---|---|
 | 1 | `session_namer.md` | First message | Names the session so the sidebar populates immediately |
 | 2 | `brief_collector.md` | Every chat turn | Collects the brief and decides when it is complete |
-| 3 | `publisher_scoring.md` | Generation | Scores all 20 publishers on 5 attributes |
+| 3 | `publisher_scoring.md` | Generation | Scores **one** publisher on 5 attributes — fanned out ×20 |
 | 4 | `publisher_verdict.md` | Generation | Collates reasons, confirms or overrides the bucket, judges catalog fit |
-| 5 | `persona_scoring.md` | Generation | Scores all 10 personas on 5 attributes |
+| 5 | `persona_scoring.md` | Generation | Scores **one** persona on 5 attributes — fanned out ×10 |
 | 6 | `persona_selection.md` | Generation | Picks 3–5 personas to build ad sets for |
 | 7 | `creative_generation.md` | Generation | Writes every creative for every persona in one call |
 | 8 | `campaign_strategy.md` | Generation | Bid rationale, KPI, brand safety, allocation rationales |
@@ -34,6 +34,32 @@ arithmetic.
 
 Calls 5 and 6 run after 3 and 4 because the `publisher_reach` attribute asks
 whether a persona is present on the publishers actually being bought.
+
+## Fan-out, and where it stops
+
+**Scoring fans out; judging does not.** Prompts 3 and 5 each handle a single item
+and run concurrently via `asyncio.gather` — 20 publisher calls, then 10 persona
+calls. One 4,000-token response took 90s+; twenty 200-token responses in parallel
+cost about as long as one. Each item also gets the full rubric rather than the
+tired, pattern-matched version a model applies to item eighteen of twenty, and a
+malformed response now costs one publisher instead of the whole phase.
+
+Prompts 4 and 6 stay single-call, because they ask genuinely collective
+questions: `catalog_fit` is a judgement about the catalog as a whole, and
+"prefer distinct personas over similar ones" cannot be evaluated one persona at a
+time.
+
+The one thing fan-out costs is comparative framing. Four of the five publisher
+attributes are absolute — they compare the publisher against the brief — but
+`scale_fit` is inherently relative to a catalog spanning 30×. So each scoring
+call receives `catalog_context`: computed min/median/max and **this publisher's
+percentile** for reach, order value and CPM. That is a better input than the raw
+catalog anyway — the model is told where the publisher sits rather than asked to
+rank twenty numbers correctly.
+
+Both scoring prompts open with an explicit instruction not to hedge toward 0.5
+just because the other items are out of view. Score clustering is the main risk
+this design carries, and isolation makes it easier to fall into.
 
 ## Editing them live
 

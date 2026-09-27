@@ -16,8 +16,10 @@ justified in writing, and that justification is shown in the UI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
+from app import config
 from app.catalog import loader
 from app.core.scoring import PUBLISHER_WEIGHTS, RECOMMEND_THRESHOLD, clamp_score, composite
 from app.gemini import schemas
@@ -28,10 +30,16 @@ from app.models.recommendation import AttributeScore, CatalogFit, PublisherPlan,
 logger = logging.getLogger(__name__)
 
 
-async def build_publisher_plan(brief: Brief) -> tuple[PublisherPlan, CatalogFit]:
-    publishers = loader.publishers()
+async def score_all(brief: Brief) -> dict[str, list[AttributeScore]]:
+    """Step 1 only. Split out so the orchestrator can start this concurrently
+    with persona scoring, which no longer depends on it."""
+    return await _score(brief, loader.publishers())
 
-    raw_scores = await _score(brief, publishers)
+
+async def build_publisher_plan(
+    brief: Brief, raw_scores: dict[str, list[AttributeScore]]
+) -> tuple[PublisherPlan, CatalogFit]:
+    publishers = loader.publishers()
     ranked = _apply_rubric(raw_scores, publishers)
     verdicts, catalog_fit = await _collate(brief, ranked)
 
@@ -86,42 +94,69 @@ async def build_publisher_plan(brief: Brief) -> tuple[PublisherPlan, CatalogFit]
 
 
 async def _score(brief: Brief, publishers) -> dict[str, list[AttributeScore]]:
+    """Fan out one call per publisher, then fan in.
+
+    Three reasons this beats scoring all 20 in a single call:
+
+    1. **Latency.** The single call produced ~4,000 output tokens and took 90s+.
+       Output generation is sequential and roughly linear in length. Twenty
+       calls of ~200 tokens, run concurrently, cost about as long as one.
+    2. **Attention.** Twenty publishers and a hundred scores in one response
+       means the later entries get a tired, pattern-matched version of the
+       rubric. Each call here gets the full rubric for one publisher.
+    3. **Blast radius.** A malformed entry now costs one publisher instead of
+       the entire phase, and a short response cannot hit the token ceiling and
+       come back as truncated JSON.
+
+    The cost is that `scale_fit` loses its comparative frame, which is why each
+    call receives computed catalog percentiles (`publisher_scale_context`).
+    """
+    results = await asyncio.gather(
+        *(_score_one(brief, publisher) for publisher in publishers),
+        return_exceptions=True,
+    )
+
+    by_id: dict[str, list[AttributeScore]] = {}
+    failures: list[str] = []
+
+    for publisher, result in zip(publishers, results):
+        if isinstance(result, BaseException):
+            # Scored as fully neutral rather than dropped. A publisher that
+            # silently vanishes from the catalog mid-run is a far more confusing
+            # failure than one that shows up at the bottom with a zero.
+            logger.warning("Scoring failed for %s: %s", publisher.id, result)
+            failures.append(publisher.id)
+            by_id[publisher.id] = []
+        else:
+            by_id[publisher.id] = result
+
+    if failures:
+        logger.warning("%d/%d publishers failed to score: %s", len(failures), len(publishers), failures)
+    return by_id
+
+
+async def _score_one(brief: Brief, publisher) -> list[AttributeScore]:
     result = await generate_json(
         prompt_file="publisher_scoring.md",
         payload={
             "brief": brief.model_dump(mode="json"),
-            "publishers": loader.publisher_catalog_for_prompt(),
+            "publisher": publisher.model_dump(),
+            "catalog_context": loader.publisher_scale_context(publisher),
         },
         response_schema=schemas.PUBLISHER_SCORING,
         temperature=0.3,
-        label="publisher_scoring",
+        label=f"publisher_scoring[{publisher.id}]",
+        thinking_budget=config.GEMINI_SCORING_THINKING_BUDGET,
     )
-
-    by_id: dict[str, list[AttributeScore]] = {}
-    for item in result.get("publishers", []):
-        publisher_id = item.get("publisher_id")
-        if not publisher_id:
-            continue
-        by_id[publisher_id] = [
-            AttributeScore(
-                attribute=s["attribute"],
-                score=clamp_score(s.get("score", 0.0)),
-                reason=s.get("reason") or "",
-            )
-            for s in item.get("attribute_scores", [])
-            if s.get("attribute") in PUBLISHER_WEIGHTS
-        ]
-
-    missing = [p.id for p in publishers if p.id not in by_id]
-    if missing:
-        # Scored as fully neutral rather than dropped. A publisher that silently
-        # vanishes from the catalog mid-run is a far more confusing failure than
-        # one that shows up at the bottom with a zero.
-        logger.warning("Publisher scoring omitted %d publishers: %s", len(missing), missing)
-        for publisher_id in missing:
-            by_id[publisher_id] = []
-
-    return by_id
+    return [
+        AttributeScore(
+            attribute=s["attribute"],
+            score=clamp_score(s.get("score", 0.0)),
+            reason=s.get("reason") or "",
+        )
+        for s in result.get("attribute_scores", [])
+        if s.get("attribute") in PUBLISHER_WEIGHTS
+    ]
 
 
 def _apply_rubric(raw_scores: dict[str, list[AttributeScore]], publishers) -> list[dict]:

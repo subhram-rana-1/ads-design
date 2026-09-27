@@ -12,7 +12,7 @@ import logging
 
 from app import config
 from app.gemini import schemas
-from app.gemini.client import generate_json
+from app.gemini.client import generate_json, stream_json
 from app.models.domain import Brief, ChatMessage, Session
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,40 @@ async def name_session(first_message: str) -> str:
 
 
 async def run_turn(session: Session, user_message: str) -> str:
-    """Process one advertiser message. Mutates the session; returns the reply."""
-    session.chat_history.append(ChatMessage(role="user", content=user_message))
+    """Process one advertiser message without streaming."""
+    payload = _turn_payload(session, user_message)
+    result = await generate_json(
+        prompt_file="brief_collector.md",
+        payload=payload,
+        response_schema=schemas.BRIEF_COLLECTOR,
+        temperature=0.5,
+        label="brief_collector",
+    )
+    return _apply_turn(session, result)
 
-    payload = {
+
+async def run_turn_streamed(session: Session, user_message: str, on_delta) -> str:
+    """Process one advertiser message, emitting the reply as it is written.
+
+    `on_delta(text)` is awaited with each new slice. Everything after the stream
+    ends — merging the brief, the clarification cap, the fallbacks — is shared
+    with `run_turn`, so the two paths cannot drift apart.
+    """
+    payload = _turn_payload(session, user_message)
+    result = await stream_json(
+        prompt_file="brief_collector.md",
+        payload=payload,
+        response_schema=schemas.BRIEF_COLLECTOR,
+        temperature=0.5,
+        label="brief_collector",
+        on_delta=on_delta,
+    )
+    return _apply_turn(session, result)
+
+
+def _turn_payload(session: Session, user_message: str) -> dict:
+    session.chat_history.append(ChatMessage(role="user", content=user_message))
+    return {
         "conversation": [
             {"role": m.role, "content": m.content} for m in session.chat_history
         ],
@@ -51,14 +81,8 @@ async def run_turn(session: Session, user_message: str) -> str:
         "max_clarification_rounds": config.MAX_CLARIFICATION_ROUNDS,
     }
 
-    result = await generate_json(
-        prompt_file="brief_collector.md",
-        payload=payload,
-        response_schema=schemas.BRIEF_COLLECTOR,
-        temperature=0.5,
-        label="brief_collector",
-    )
 
+def _apply_turn(session: Session, result: dict) -> str:
     reply = (result.get("reply") or "").strip() or "Could you tell me a bit more about the business?"
     _merge(session.brief, result.get("extracted") or {})
 
