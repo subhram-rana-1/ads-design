@@ -67,6 +67,20 @@ If you create the service by hand instead (**New → Web Service**), Render
 ignores `render.yaml` and you must set the env var yourself. The Dockerfile is
 at the repo root so the build works either way.
 
+### If the build fails with `open Dockerfile: no such file or directory`
+
+The repo is fine — `Dockerfile` is at the root and `docker build .` works. That
+error means the Render service has a **Root Directory** set, so it is looking
+inside a subfolder that has no Dockerfile.
+
+**Settings → Build & Deploy → Root Directory must be blank.** Clear it and
+redeploy.
+
+If you would rather not debug it, skip building on Render altogether and deploy
+the image CI already publishes — see the commented block at the bottom of
+`render.yaml`. Make the GHCR package public first, then Render pulls a
+pre-tested image and never touches a Dockerfile.
+
 One service, not two. A static-site CDN in front of the API would buffer the
 SSE stream, and the generation progress would sit silent for a minute and then
 jump to done.

@@ -1,24 +1,27 @@
 # Optional hosted deploy. The primary way to run this is `docker compose up`
-# locally — see the repo root.
+# locally — see DEPLOY.md.
+#
+# THE API KEY IS NOT IN THIS FILE AND MUST NEVER BE.
+# `sync: false` means Render prompts for the value in its dashboard on first
+# deploy and stores it encrypted. Nothing secret is committed.
 #
 # One service, not two: the image bakes in the UI and serves it from the same
 # uvicorn process. That keeps the SSE generation stream on a direct connection
 # instead of routing it through a static-site CDN, which would buffer it and
 # make the progress UI sit silent until the very end.
-#
-# THE API KEY IS NOT IN THIS FILE AND MUST NEVER BE.
-# `sync: false` means Render prompts for the value in its dashboard on first
-# deploy and stores it encrypted. Nothing secret is committed.
 
 services:
   - type: web
     name: ads-design
     runtime: docker
     plan: free
-    # Repo-root defaults, so a service created by hand in the dashboard
-    # ("New -> Web Service") builds correctly too, not just a Blueprint.
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    # No dockerfilePath or dockerContext: both default to the repo root, which
+    # is where the Dockerfile lives. Naming them explicitly added nothing and
+    # gave the dashboard something to disagree with.
+    #
+    # If a build fails with "open Dockerfile: no such file or directory",
+    # the service has a stale Root Directory set. Render -> Settings ->
+    # Build & Deploy -> Root Directory must be BLANK.
     healthCheckPath: /health
     envVars:
       - key: GEMINI_API_KEY
@@ -30,3 +33,28 @@ services:
       - key: GEMINI_MAX_CONCURRENCY
         value: "8"
       # Render injects PORT; the Dockerfile CMD already honours it.
+
+# ---------------------------------------------------------------------------
+# Fallback: deploy the prebuilt image instead of building from source.
+#
+# CI publishes a tested image to GHCR on every push to main, so Render does not
+# need to build anything — which removes Dockerfile path resolution from the
+# picture entirely, along with the build minutes.
+#
+# To use it: make the package public at
+#   https://github.com/users/subhram-rana-1/packages/container/ads-design/settings
+# then delete the service block above and uncomment this one.
+#
+# services:
+#   - type: web
+#     name: ads-design
+#     runtime: image
+#     plan: free
+#     image:
+#       url: ghcr.io/subhram-rana-1/ads-design:latest
+#     healthCheckPath: /health
+#     envVars:
+#       - key: GEMINI_API_KEY
+#         sync: false
+#       - key: GEMINI_MAX_CONCURRENCY
+#         value: "8"
