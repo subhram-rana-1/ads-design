@@ -1,10 +1,9 @@
 services:
   backend:
-    build:
-      # Root context so the Dockerfile can bake in prompts/ and the catalog,
-      # which is what makes the image deployable without these volume mounts.
-      context: .
-      dockerfile: backend/Dockerfile
+    # Root context, and the Dockerfile lives there too. It bakes in prompts,
+    # catalog and UI, which is what makes the image deployable without the
+    # volume mounts below.
+    build: .
     # Host port is overridable because 8000 and 8080 are popular. Only the left
     # side changes; nginx always reaches the backend as backend:8000 on the
     # compose network.

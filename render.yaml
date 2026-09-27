@@ -15,7 +15,9 @@ services:
     name: ads-design
     runtime: docker
     plan: free
-    dockerfilePath: ./backend/Dockerfile
+    # Repo-root defaults, so a service created by hand in the dashboard
+    # ("New -> Web Service") builds correctly too, not just a Blueprint.
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:

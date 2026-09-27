@@ -55,13 +55,17 @@ not deployable.
 
 ## 3. Hosted on Render — optional public link
 
-[`render.yaml`](render.yaml) is a blueprint:
+[`render.yaml`](render.yaml) is a blueprint. Use **Blueprint**, not **Web Service** — only Blueprint reads `render.yaml`:
 
 1. <https://render.com> → **New** → **Blueprint** → connect this repo
 2. Render reads the blueprint and **prompts for `GEMINI_API_KEY`**. It is
    declared `sync: false`, which means the value is entered in Render's
    dashboard and stored encrypted. It is never committed.
 3. Deploy.
+
+If you create the service by hand instead (**New → Web Service**), Render
+ignores `render.yaml` and you must set the env var yourself. The Dockerfile is
+at the repo root so the build works either way.
 
 One service, not two. A static-site CDN in front of the API would buffer the
 SSE stream, and the generation progress would sit silent for a minute and then
