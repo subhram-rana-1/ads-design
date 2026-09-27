@@ -1,0 +1,21 @@
+# Local AI agent tooling — not part of the submission
+.claude/
+thoughts/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Dependencies / build output
+node_modules/
+dist/
+build/
+.next/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
