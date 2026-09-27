@@ -1,0 +1,33 @@
+services:
+  backend:
+    build: ./backend
+    # Host port is overridable because 8000 and 8080 are popular. Only the left
+    # side changes; nginx always reaches the backend as backend:8000 on the
+    # compose network.
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - PROMPTS_DIR=/prompts
+      - DATA_DIR=/data
+    volumes:
+      # Source is mounted so --reload picks up edits without a rebuild.
+      - ./backend:/app
+      # Prompts and catalog are read-only: editing a prompt takes effect on the
+      # next request, which is what you want when tuning copy live.
+      - ./prompts:/prompts:ro
+      - ./problem_statement/data:/data:ro
+    # --workers 1 is mandatory, not a default. The session store is a plain dict
+    # in process memory; a second worker would mean a second store, and a session
+    # would appear to exist roughly half the time.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --reload
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./frontend/public:/usr/share/nginx/html:ro
+    depends_on:
+      - backend

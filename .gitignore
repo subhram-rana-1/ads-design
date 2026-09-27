@@ -17,5 +17,7 @@ __pycache__/
 .venv/
 venv/
 
-# OS
+# OS / editor
 .DS_Store
+.idea/
+.jbeval/
