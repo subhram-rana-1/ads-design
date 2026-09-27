@@ -36,6 +36,21 @@ function esc(value) {
   ));
 }
 
+/** Escape first, then apply the tiny subset of markdown the agent may emit.
+ *
+ * Order matters and is the whole security argument: `esc()` neutralises any
+ * markup in the model's output, and only afterwards do we introduce tags of our
+ * own choosing. A model that emits `<script>` gets it rendered as text.
+ *
+ * Bold only. No links, no raw HTML, nothing that could navigate or execute.
+ */
+function formatReply(text) {
+  return esc(text).replace(
+    /\*\*([^*\n]+)\*\*/g,
+    '<strong class="font-semibold text-gray-900">$1</strong>'
+  );
+}
+
 const money = (n) => '$' + Number(n ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const compact = (n) => Number(n ?? 0).toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 
@@ -177,8 +192,8 @@ function renderMessage(m) {
       </div>`;
   }
   return `<div class="flex justify-center rise">
-      <div class="max-w-[82%] text-center text-[15px] leading-relaxed text-gray-700
-                  font-light whitespace-pre-wrap">${esc(m.content)}</div>
+      <div class="max-w-[82%] w-fit text-left text-[15px] leading-relaxed text-gray-700
+                  whitespace-pre-wrap">${formatReply(m.content)}</div>
     </div>`;
 }
 
@@ -195,8 +210,8 @@ function renderStreaming() {
       </div>`;
   }
   return `<div class="flex justify-center">
-      <div class="max-w-[82%] text-center text-[15px] leading-relaxed text-gray-700
-                  font-light whitespace-pre-wrap caret">${esc(state.streamText)}</div>
+      <div class="max-w-[82%] w-fit text-left text-[15px] leading-relaxed text-gray-700
+                  whitespace-pre-wrap caret">${formatReply(state.streamText)}</div>
     </div>`;
 }
 

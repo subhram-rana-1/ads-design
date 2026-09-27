@@ -97,7 +97,12 @@ BRIEF_COLLECTOR = _obj(
     {
         "reply": {
             "type": "STRING",
-            "description": "The message shown to the advertiser. Conversational, at most three sentences.",
+            "description": (
+                "The message shown to the advertiser. When asking for information, use "
+                "a short opening line, a blank line, then one '  • **Field name** — question' "
+                "bullet per item. When not asking for anything, one or two plain sentences "
+                "with no bullets and no bold."
+            ),
         },
         "extracted": _obj(
             {
